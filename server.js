@@ -3,31 +3,31 @@ const http = require("http");
 const socketIo = require("socket.io");
 const easyrtc = require("open-easyrtc");
 
-// Configura o servidor
+// Configuração do Servidor Express
 const app = express();
 const webServer = http.createServer(app);
 
-// Libera o CORS (para o seu HTML conseguir conectar sem ser bloqueado)
-const socketServer = socketIo(webServer, {
-    cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+// Configuração do Socket.io
+const socketServer = socketIo.listen(webServer, {
+    "log level": 1,
+    "cors": {
+        "origin": "*", // Permite que o seu jogo local (127.0.0.1) conecte aqui
+        "methods": ["GET", "POST"]
     }
 });
 
-// Inicia o EasyRTC (O que o Networked-Aframe usa para sincronizar posições)
+// Inicia o EasyRTC (O coração do multiplayer VR)
 easyrtc.setOption("logLevel", "debug");
-easyrtc.listen(app, socketServer, null, function(err, rtcRef) {
-    console.log("Servidor Multiplayer Iniciado com Sucesso!");
-    
-    rtcRef.events.on("roomCreate", function(appObj, creatorConnectionObj, roomName, roomOptions, callback) {
-        console.log("Nova sala criada: " + roomName);
-        appObj.events.defaultListeners.roomCreate(appObj, creatorConnectionObj, roomName, roomOptions, callback);
-    });
+easyrtc.events.on("easyrtcAuth", (socket, easyrtcid, msg, socketCallback, callback) => {
+    easyrtc.events.defaultListeners.easyrtcAuth(socket, easyrtcid, msg, socketCallback, callback);
 });
 
-// Define a porta (O Render vai escolher a porta automaticamente)
-const port = process.env.PORT || 3000;
-webServer.listen(port, function () {
-    console.log("Servidor escutando na porta: " + port);
+easyrtc.listen(app, socketServer, null, (err, rtcRef) => {
+    console.log("Servidor EasyRTC Iniciado com Sucesso!");
+});
+
+// Define a porta do Render (ou 8080 local)
+const port = process.env.PORT || 8080;
+webServer.listen(port, () => {
+    console.log("Servidor Multiplayer rodando na porta: " + port);
 });
