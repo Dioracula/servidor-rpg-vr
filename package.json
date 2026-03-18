@@ -1,14 +1,15 @@
 {
-  "name": "rpg-multiplayer-server",
+  "name": "rpg-vr-server",
   "version": "1.0.0",
-  "description": "Servidor multiplayer para RPG VR",
+  "description": "Servidor Multiplayer para NAF",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "open-easyrtc": "^2.0.12",
+    "networked-aframe": "^0.12.0",
+    "open-easyrtc": "^2.0.5",
     "socket.io": "^2.5.0"
   }
 }
