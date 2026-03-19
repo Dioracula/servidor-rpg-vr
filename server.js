@@ -70,14 +70,7 @@ db.ref('cenario_inimigos').on('child_added', snap => {
 db.ref('cenario_inimigos').on('child_changed', snap => {
     let id = snap.key;
     let data = snap.val();
-    // EVENTO 3: ADMIN DELETOU O INIMIGO DEFINITIVAMENTE
-db.ref('cenario_inimigos').on('child_removed', snap => {
-    let id = snap.key;
-    if (estadoInimigos[id]) {
-        delete estadoInimigos[id];
-        console.log(`[Servidor] Inimigo ${id} apagado da existência pelo Admin!`);
-    }
-});
+   
     if (estadoInimigos[id]) {
         // Atualiza a vida se um jogador bateu nele
         estadoInimigos[id].hp = data.hp;
