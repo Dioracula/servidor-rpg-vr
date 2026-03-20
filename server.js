@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: IA Blindada e Respawn Customizado!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: IA Patrulha e Respawn Custom Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -27,6 +27,7 @@ function lerDadosInimigo(id, data) {
         hp: data.hp !== undefined ? Number(data.hp) : 50,
         tipo: data.tipo || 'meelee',
         comportamento: data.comportamento || 'hostil',
+        movimento: data.movimento || 'estatico', // NOVO: Estático ou Patrulha
         spawnPos: data.spawnPos || { x: Number(data.pos.x), y: Number(data.pos.y), z: Number(data.pos.z) },
         pos: data.pos ? { x: Number(data.pos.x), y: Number(data.pos.y), z: Number(data.pos.z) } : {x:0, y:0, z:0},
         rotY: Number(data.rotY) || 0,
@@ -34,10 +35,14 @@ function lerDadosInimigo(id, data) {
         cooldown: data.cooldown !== undefined ? Number(data.cooldown) : 2000,
         aggroRange: data.aggroRange !== undefined ? Number(data.aggroRange) : 15,
         attackRange: data.attackRange !== undefined ? Number(data.attackRange) : 1.8,
-        respawnTime: data.respawnTime !== undefined ? Number(data.respawnTime) : 60000, // NOVO: LÊ O TEMPO DE RESPAWN DO BANCO
+        respawnTime: data.respawnTime !== undefined ? Number(data.respawnTime) : 60000, // LÊ O TEMPO DO PAINEL
         ultimoAtaque: estadoInimigos[id] ? estadoInimigos[id].ultimoAtaque : 0,
         mortoEm: data.mortoEm !== undefined ? data.mortoEm : (estadoInimigos[id] ? estadoInimigos[id].mortoEm : null),
-        ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : Date.now()
+        ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : Date.now(),
+        
+        // Variáveis da Patrulha
+        tempoProxPatrulha: estadoInimigos[id] ? estadoInimigos[id].tempoProxPatrulha : 0,
+        alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null
     };
 }
 
@@ -68,13 +73,10 @@ setInterval(() => {
     for (let id in estadoInimigos) {
         let e = estadoInimigos[id];
         
-        // Verifica se a posição está corrompida (Prevenção de Crash)
-        if (isNaN(e.pos.x) || isNaN(e.pos.z)) {
-            e.pos = { ...e.spawnPos };
-        }
+        if (isNaN(e.pos.x) || isNaN(e.pos.z)) { e.pos = { ...e.spawnPos }; }
         
+        // RESPAWN CUSTOMIZADO
         if (e.hp <= 0) {
-            // AQUI A MÁGICA ACONTECE: Usa o respawnTime escolhido por você!
             if (e.mortoEm && (agora - e.mortoEm >= e.respawnTime)) { 
                 e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = agora;
                 db.ref('cenario_inimigos/' + id).update({ hp: e.hp, mortoEm: null, pos: e.pos });
@@ -106,12 +108,10 @@ setInterval(() => {
 
         if (alvoMaisPerto) {
             e.ultimoAvistamento = agora; 
+            e.alvoPatrulha = null; // Esquece a patrulha se ver alguém!
+
             let dx = alvoMaisPerto.x - e.pos.x; let dz = alvoMaisPerto.z - e.pos.z; 
-            
-            // Só anda e atualiza ângulo se a distância for segura (evita divisão por zero/Infinity)
-            if (menorDistancia > 0.01) {
-                e.rotY = Math.atan2(dx, dz);
-            }
+            if (menorDistancia > 0.01) { e.rotY = Math.atan2(dx, dz); }
 
             if (menorDistancia > e.attackRange) {
                 if (menorDistancia > 0.01) {
@@ -131,7 +131,11 @@ setInterval(() => {
                 }
             }
         } else {
-            if (estourouColeira || (agora - e.ultimoAvistamento > 5000)) {
+            // NINGUÉM À VISTA
+            let perdendoAggro = (agora - e.ultimoAvistamento < 5000); // Fica alerta 5 seg
+
+            if (estourouColeira || (!perdendoAggro && distDaBase > 6.0)) {
+                // Muito longe ou desistiu: Volta pra base
                 if (distDaBase > 0.5) {
                     let dx = e.spawnPos.x - e.pos.x; let dz = e.spawnPos.z - e.pos.z;
                     if (distDaBase > 0.01) {
@@ -144,9 +148,35 @@ setInterval(() => {
                         }
                     }
                 } else {
-                    if (e.comportamento === 'pacifico' && e.hp < e.hpMax) {
-                        e.hp = e.hpMax;
-                        db.ref('cenario_inimigos/' + id).update({ hp: e.hp });
+                    e.alvoPatrulha = null;
+                    if (e.comportamento === 'pacifico' && e.hp < e.hpMax) { e.hp = e.hpMax; db.ref('cenario_inimigos/' + id).update({ hp: e.hp }); }
+                }
+            } else if (!perdendoAggro && e.movimento === 'livre') {
+                // LÓGICA DE PATRULHA (MOVIMENTO LIVRE)
+                if (agora > e.tempoProxPatrulha) {
+                    if (!e.alvoPatrulha) {
+                        // Sorteia um novo ponto num raio de 4 metros da base
+                        let angulo = Math.random() * Math.PI * 2;
+                        let raio = Math.random() * 4.0;
+                        e.alvoPatrulha = { x: e.spawnPos.x + Math.cos(angulo)*raio, z: e.spawnPos.z + Math.sin(angulo)*raio };
+                    } else {
+                        // Anda até o ponto
+                        let dxP = e.alvoPatrulha.x - e.pos.x; let dzP = e.alvoPatrulha.z - e.pos.z;
+                        let distP = Math.hypot(dxP, dzP);
+
+                        if (distP > 0.2) {
+                            e.rotY = Math.atan2(dxP, dzP);
+                            let speedPatrol = e.speed * 0.6; // Patrulha caminhando mais devagar
+                            let dirX = (dxP / distP) * speedPatrol; let dirZ = (dzP / distP) * speedPatrol;
+                            if (isFinite(dirX) && isFinite(dirZ)) {
+                                e.pos.x += dirX; e.pos.z += dirZ;
+                                db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                            }
+                        } else {
+                            // Chegou! Limpa o alvo e aguarda de 2 a 6 segundos para andar de novo
+                            e.alvoPatrulha = null;
+                            e.tempoProxPatrulha = agora + 2000 + Math.random() * 4000;
+                        }
                     }
                 }
             }
