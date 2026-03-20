@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Patrulha Imediata Ativada!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Heartbeat e Patrulha Dinâmica Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -20,11 +20,7 @@ let jogadoresAtivos = {};
 
 db.ref('players').on('value', snap => { jogadoresAtivos = snap.val() || {}; });
 
-// FUNÇÃO ESCUDO: Garante que nada vire "NaN" (Not a Number) ou "Infinity"
-const safeNum = (val, fallback) => {
-    let n = Number(val);
-    return (isFinite(n) && !isNaN(n)) ? n : fallback;
-};
+const safeNum = (val, fallback) => { let n = Number(val); return (isFinite(n) && !isNaN(n)) ? n : fallback; };
 
 function lerDadosInimigo(id, data) {
     return {
@@ -44,10 +40,7 @@ function lerDadosInimigo(id, data) {
         respawnTime: safeNum(data.respawnTime, 60000),
         ultimoAtaque: estadoInimigos[id] ? estadoInimigos[id].ultimoAtaque : 0,
         mortoEm: data.mortoEm !== undefined ? data.mortoEm : (estadoInimigos[id] ? estadoInimigos[id].mortoEm : null),
-        
-        // CORREÇÃO: Ele nasce relaxado (0) e não em alerta (Date.now()), patrulhando na mesma hora!
-        ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : 0, 
-        
+        ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : Date.now(),
         tempoProxPatrulha: estadoInimigos[id] ? estadoInimigos[id].tempoProxPatrulha : 0,
         alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null
     };
@@ -55,24 +48,24 @@ function lerDadosInimigo(id, data) {
 
 db.ref('cenario_inimigos').on('child_added', snap => {
     let id = snap.key; let data = snap.val(); 
-    if (!data || data.hpMax === undefined || !data.modeloGlb) {
-        db.ref('cenario_inimigos/' + id).remove(); return;
-    }
+    if (!data || data.hpMax === undefined || !data.modeloGlb) { db.ref('cenario_inimigos/' + id).remove(); return; }
     if (!data.pos) return;
     estadoInimigos[id] = lerDadosInimigo(id, data);
 });
 
 db.ref('cenario_inimigos').on('child_changed', snap => {
     let id = snap.key; let data = snap.val(); if(!data) return;
-    if(estadoInimigos[id]) {
-        let newData = lerDadosInimigo(id, data);
-        estadoInimigos[id] = { ...estadoInimigos[id], ...newData };
-    }
+    if(estadoInimigos[id]) { let newData = lerDadosInimigo(id, data); estadoInimigos[id] = { ...estadoInimigos[id], ...newData }; }
 });
 
 db.ref('cenario_inimigos').on('child_removed', snap => { delete estadoInimigos[snap.key]; });
 
-// IA RODANDO A 100ms COM COFRE ANTI-CRASH (try-catch)
+// O BATIMENTO CARDÍACO: Avisa o jogo que o servidor da IA está acordado!
+setInterval(() => {
+    db.ref('servidor_ia_status').set(Date.now());
+}, 2000);
+
+// IA RODANDO A 100ms
 setInterval(() => {
     let agora = Date.now();
 
@@ -80,44 +73,32 @@ setInterval(() => {
         try {
             let e = estadoInimigos[id];
             
-            // O AUDITOR: Se está morto, mas sem atestado de óbito, o servidor carimba!
             if (e.hp <= 0) {
-                if (!e.mortoEm) {
-                    e.mortoEm = agora;
-                    db.ref('cenario_inimigos/' + id).update({ mortoEm: agora });
-                } else if (agora - e.mortoEm >= e.respawnTime) { 
-                    e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = 0; e.alvoPatrulha = null;
-                    db.ref('cenario_inimigos/' + id).update({ hp: e.hp, mortoEm: null, pos: e.pos });
-                }
+                if (!e.mortoEm) { e.mortoEm = agora; db.ref('cenario_inimigos/' + id).update({ mortoEm: agora }); } 
+                else if (agora - e.mortoEm >= e.respawnTime) { e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = 0; e.alvoPatrulha = null; db.ref('cenario_inimigos/' + id).update({ hp: e.hp, mortoEm: null, pos: e.pos }); }
                 continue; 
             }
 
             let distDaBase = Math.hypot(e.pos.x - e.spawnPos.x, e.pos.z - e.spawnPos.z);
             let limiteColeira = e.aggroRange * 1.5;
             let estourouColeira = distDaBase > limiteColeira;
-
             let machucado = e.hp < e.hpMax;
             let querBriga = (e.comportamento === 'hostil') || (e.comportamento === 'pacifico' && machucado);
 
-            let alvoMaisPerto = null;
-            let menorDistancia = Infinity;
+            let alvoMaisPerto = null; let menorDistancia = Infinity;
 
             if (querBriga && !estourouColeira) {
                 for (let pId in jogadoresAtivos) {
                     let p = jogadoresAtivos[pId];
                     if (p.vivo && p.position) {
                         let dist = Math.hypot(safeNum(p.position.x, 0) - e.pos.x, safeNum(p.position.z, 0) - e.pos.z);
-                        if (dist <= e.aggroRange && dist < menorDistancia) {
-                            menorDistancia = dist; alvoMaisPerto = p.position;
-                        }
+                        if (dist <= e.aggroRange && dist < menorDistancia) { menorDistancia = dist; alvoMaisPerto = p.position; }
                     }
                 }
             }
 
             if (alvoMaisPerto) {
-                e.ultimoAvistamento = agora; 
-                e.alvoPatrulha = null; 
-
+                e.ultimoAvistamento = agora; e.alvoPatrulha = null; 
                 let dx = safeNum(alvoMaisPerto.x, 0) - e.pos.x; let dz = safeNum(alvoMaisPerto.z, 0) - e.pos.z; 
                 if (menorDistancia > 0.01) { e.rotY = Math.atan2(dx, dz); }
 
@@ -129,48 +110,37 @@ setInterval(() => {
                     }
                 } else {
                     if (agora - e.ultimoAtaque > e.cooldown) {
-                        e.ultimoAtaque = agora;
-                        let updateData = { rotY: e.rotY };
-                        if (e.tipo === 'atirador') updateData.shoot = { time: agora, tx: safeNum(alvoMaisPerto.x, 0), ty: 1.2, tz: safeNum(alvoMaisPerto.z, 0) };
-                        else updateData.meleeAttack = { time: agora };
+                        e.ultimoAtaque = agora; let updateData = { rotY: e.rotY };
+                        if (e.tipo === 'atirador') updateData.shoot = { time: agora, tx: safeNum(alvoMaisPerto.x, 0), ty: 1.2, tz: safeNum(alvoMaisPerto.z, 0) }; else updateData.meleeAttack = { time: agora };
                         db.ref('cenario_inimigos/' + id).update(updateData);
                     }
                 }
             } else {
-                let perdendoAggro = (agora - e.ultimoAvistamento < 5000); 
+                // MODO ALERTA REDUZIDO PARA 2 SEGUNDOS
+                let perdendoAggro = (agora - e.ultimoAvistamento < 2000); 
 
                 if (estourouColeira || (!perdendoAggro && distDaBase > 6.0)) {
                     if (distDaBase > 0.5) {
                         let dx = e.spawnPos.x - e.pos.x; let dz = e.spawnPos.z - e.pos.z;
                         if (distDaBase > 0.01) {
-                            e.rotY = Math.atan2(dx, dz);
-                            let speedVolta = e.speed * 1.5; 
-                            let dirX = (dx / distDaBase) * speedVolta; let dirZ = (dz / distDaBase) * speedVolta;
-                            e.pos.x += dirX; e.pos.z += dirZ;
-                            db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                            e.rotY = Math.atan2(dx, dz); let speedVolta = e.speed * 1.5; let dirX = (dx / distDaBase) * speedVolta; let dirZ = (dz / distDaBase) * speedVolta;
+                            e.pos.x += dirX; e.pos.z += dirZ; db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                         }
                     } else {
                         e.alvoPatrulha = null;
-                        if (e.comportamento === 'pacifico' && e.hp < e.hpMax) { 
-                            e.hp = e.hpMax; db.ref('cenario_inimigos/' + id).update({ hp: e.hp }); 
-                        }
+                        if (e.comportamento === 'pacifico' && e.hp < e.hpMax) { e.hp = e.hpMax; db.ref('cenario_inimigos/' + id).update({ hp: e.hp }); }
                     }
                 } else if (!perdendoAggro && e.movimento === 'livre') {
-                    // PATRULHA
                     if (agora > e.tempoProxPatrulha) {
                         if (!e.alvoPatrulha) {
                             let angulo = Math.random() * Math.PI * 2; let raio = Math.random() * 4.0;
                             e.alvoPatrulha = { x: e.spawnPos.x + Math.cos(angulo)*raio, z: e.spawnPos.z + Math.sin(angulo)*raio };
                         } else {
-                            let dxP = e.alvoPatrulha.x - e.pos.x; let dzP = e.alvoPatrulha.z - e.pos.z;
-                            let distP = Math.hypot(dxP, dzP);
-
+                            let dxP = e.alvoPatrulha.x - e.pos.x; let dzP = e.alvoPatrulha.z - e.pos.z; let distP = Math.hypot(dxP, dzP);
                             if (distP > 0.2) {
-                                e.rotY = Math.atan2(dxP, dzP);
-                                let speedPatrol = e.speed * 0.6; 
+                                e.rotY = Math.atan2(dxP, dzP); let speedPatrol = e.speed * 0.6; 
                                 let dirX = (dxP / distP) * speedPatrol; let dirZ = (dzP / distP) * speedPatrol;
-                                e.pos.x += dirX; e.pos.z += dirZ;
-                                db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                                e.pos.x += dirX; e.pos.z += dirZ; db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                             } else {
                                 e.alvoPatrulha = null; e.tempoProxPatrulha = agora + 2000 + Math.random() * 4000;
                             }
@@ -178,8 +148,6 @@ setInterval(() => {
                     }
                 }
             }
-        } catch(err) {
-            console.error(`Erro isolado no inimigo ${id}. Pulando frame. Erro:`, err);
-        }
+        } catch(err) { console.error(`Erro isolado no inimigo ${id}. Pulando frame. Erro:`, err); }
     }
 }, 100);
