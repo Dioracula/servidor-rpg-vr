@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: IA Absoluta Anti-Crash Ativada!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Patrulha Imediata Ativada!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -44,7 +44,10 @@ function lerDadosInimigo(id, data) {
         respawnTime: safeNum(data.respawnTime, 60000),
         ultimoAtaque: estadoInimigos[id] ? estadoInimigos[id].ultimoAtaque : 0,
         mortoEm: data.mortoEm !== undefined ? data.mortoEm : (estadoInimigos[id] ? estadoInimigos[id].mortoEm : null),
-        ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : Date.now(),
+        
+        // CORREÇÃO: Ele nasce relaxado (0) e não em alerta (Date.now()), patrulhando na mesma hora!
+        ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : 0, 
+        
         tempoProxPatrulha: estadoInimigos[id] ? estadoInimigos[id].tempoProxPatrulha : 0,
         alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null
     };
@@ -83,7 +86,7 @@ setInterval(() => {
                     e.mortoEm = agora;
                     db.ref('cenario_inimigos/' + id).update({ mortoEm: agora });
                 } else if (agora - e.mortoEm >= e.respawnTime) { 
-                    e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = agora; e.alvoPatrulha = null;
+                    e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = 0; e.alvoPatrulha = null;
                     db.ref('cenario_inimigos/' + id).update({ hp: e.hp, mortoEm: null, pos: e.pos });
                 }
                 continue; 
