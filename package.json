@@ -1,15 +1,13 @@
 {
-  "name": "rpg-vr-server",
+  "name": "servidor-rpg-mmo",
   "version": "1.0.0",
-  "description": "Servidor Multiplayer para NAF",
+  "description": "Servidor IA do RPG",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "networked-aframe": "^0.12.0",
-    "open-easyrtc": "^2.0.5",
-    "socket.io": "^2.5.0"
+    "firebase-admin": "^11.11.0"
   }
 }
