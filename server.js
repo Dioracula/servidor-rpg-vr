@@ -9,7 +9,7 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('🔥 Servidor do RPG VR/PC está VIVO e Blindado!');
+    res.send('🔥 Servidor do RPG VR/PC está VIVO e com IA Tática Avançada!');
 });
 
 app.listen(port, () => {
@@ -17,7 +17,7 @@ app.listen(port, () => {
 });
 
 // ==========================================
-// 2. LÓGICA DO RPG (IA Blindada contra NaN)
+// 2. LÓGICA DO RPG (IA com Velocidade e Aggro)
 // ==========================================
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -26,6 +26,7 @@ admin.initializeApp({
 
 const db = admin.database();
 
+// Status base caso o Admin não preencha nada
 const baseStats = {
     'atirador': { speed: 0.04, cooldown: 3500, range: 30, stopRange: 6 },
     'meelee': { speed: 0.07, cooldown: 2000, range: 30, stopRange: 1.8 }
@@ -46,12 +47,13 @@ db.ref('cenario_inimigos').on('child_added', snap => {
     estadoInimigos[id] = {
         hpMax: data.hpMax || data.hp || 50,
         tipo: tipoIA,
-        // BLINDAGEM: Garante que o SpawnPos sempre exista com números válidos
         spawnPos: data.spawnPos || { x: data.pos.x || 0, y: data.pos.y || 0, z: data.pos.z || 0 },
-        speed: stats.speed,
-        cooldown: stats.cooldown,
-        range: data.range || stats.range, 
+        // LÊ OS NOVOS STATUS DINÂMICOS DO PAINEL ADMIN
+        speed: data.speed !== undefined ? data.speed : stats.speed,
+        cooldown: data.cooldown !== undefined ? data.cooldown : stats.cooldown,
+        range: data.range !== undefined ? data.range : stats.range, 
         stopRange: stats.stopRange,
+        
         hp: data.hp,
         pos: data.pos,
         rotY: data.rotY || 0,
@@ -66,15 +68,16 @@ db.ref('cenario_inimigos').on('child_changed', snap => {
     if (estadoInimigos[id] && data) {
         estadoInimigos[id].hp = data.hp;
         if (data.mortoEm !== undefined) estadoInimigos[id].mortoEm = data.mortoEm;
-        if (data.range) estadoInimigos[id].range = data.range;
-        if (data.spawnPos) estadoInimigos[id].spawnPos = data.spawnPos; // Atualiza a base se o admin mudar
+        if (data.spawnPos) estadoInimigos[id].spawnPos = data.spawnPos;
         
-        // Se o GM teleportar usando o botão de Teleporte Rápido
+        // Atualiza os status ao vivo se o GM mudar no painel
+        if (data.range !== undefined) estadoInimigos[id].range = data.range;
+        if (data.speed !== undefined) estadoInimigos[id].speed = data.speed;
+        if (data.cooldown !== undefined) estadoInimigos[id].cooldown = data.cooldown;
+        
         if (data.pos) {
             let dist = Math.hypot(data.pos.x - estadoInimigos[id].pos.x, data.pos.z - estadoInimigos[id].pos.z);
-            if (dist > 3.0) { 
-                estadoInimigos[id].pos = data.pos;
-            }
+            if (dist > 3.0) estadoInimigos[id].pos = data.pos; // GM Teleport
         }
     }
 });
@@ -83,7 +86,7 @@ db.ref('cenario_inimigos').on('child_removed', snap => {
     let id = snap.key; if (estadoInimigos[id]) delete estadoInimigos[id];
 });
 
-// LOOP PRINCIPAL DA IA
+// LOOP PRINCIPAL DA IA (A Mente dos Monstros)
 setInterval(() => {
     let agora = Date.now();
 
@@ -93,7 +96,6 @@ setInterval(() => {
         if (estado.hp <= 0) {
             if (estado.mortoEm && (agora - estado.mortoEm >= 60000)) { 
                 estado.hp = estado.hpMax; estado.mortoEm = null;
-                // Renasce na base com segurança
                 estado.pos = { x: estado.spawnPos.x, y: estado.spawnPos.y, z: estado.spawnPos.z }; 
                 estado.ultimoAvistamento = agora;
                 db.ref('cenario_inimigos/' + idInimigo).update({ hp: estado.hp, mortoEm: null, pos: estado.pos });
@@ -101,58 +103,60 @@ setInterval(() => {
             continue; 
         }
 
+        // NOVO AGGRO RESTRITO: Só entra na lista se estiver DENTRO DO CAMPO DE VISÃO!
         let alvosValidos = [];
         for (let pId in jogadoresAtivos) {
             let p = jogadoresAtivos[pId];
             if (p.vivo && p.position) {
                 let dist = Math.hypot(p.position.x - estado.pos.x, p.position.z - estado.pos.z);
-                alvosValidos.push({ pos: p.position, dist: dist });
+                if (dist <= estado.range) { // O SEGREDO ESTÁ AQUI
+                    alvosValidos.push({ pos: p.position, dist: dist });
+                }
             }
         }
 
         let viuAlguem = false;
 
+        // Se tem alguém na visão, ele persegue impiedosamente!
         if (alvosValidos.length > 0) {
+            viuAlguem = true;
+            estado.ultimoAvistamento = agora; 
+            
             alvosValidos.sort((a, b) => a.dist - b.dist);
             let alvo = alvosValidos[0].pos; 
             let dist = alvosValidos[0].dist;
 
-            if (dist <= estado.range) {
-                viuAlguem = true;
-                estado.ultimoAvistamento = agora; 
-                
-                let dx = alvo.x - estado.pos.x; let dz = alvo.z - estado.pos.z;
-                let anguloY = Math.atan2(dx, dz);
+            let dx = alvo.x - estado.pos.x; let dz = alvo.z - estado.pos.z;
+            let anguloY = Math.atan2(dx, dz);
 
-                if (dist > estado.stopRange) {
-                    // BLINDAGEM: Evita divisão por zero se a distância bugar
-                    if (dist > 0.1) {
-                        let dirX = (dx / dist) * estado.speed;
-                        let dirZ = (dz / dist) * estado.speed;
-                        if (!isNaN(dirX) && !isNaN(dirZ)) {
-                            estado.pos.x += dirX;
-                            estado.pos.z += dirZ;
-                        }
+            if (dist > estado.stopRange) {
+                if (dist > 0.1) {
+                    let dirX = (dx / dist) * estado.speed;
+                    let dirZ = (dz / dist) * estado.speed;
+                    if (!isNaN(dirX) && !isNaN(dirZ)) {
+                        estado.pos.x += dirX;
+                        estado.pos.z += dirZ;
                     }
-                    estado.rotY = anguloY;
-                    db.ref('cenario_inimigos/' + idInimigo).update({ pos: estado.pos, rotY: estado.rotY });
-                } 
-                else {
-                    if (agora - estado.ultimoAtaque > estado.cooldown) {
-                        estado.ultimoAtaque = agora; estado.rotY = anguloY;
-                        let updateData = { rotY: estado.rotY };
-                        if (estado.tipo === 'atirador') {
-                            updateData.shoot = { time: agora, tx: Number(alvo.x.toFixed(3)), ty: 1.2, tz: Number(alvo.z.toFixed(3)) };
-                        } else if (estado.tipo === 'meelee') {
-                            updateData.meleeAttack = { time: agora };
-                        }
-                        db.ref('cenario_inimigos/' + idInimigo).update(updateData);
+                }
+                estado.rotY = anguloY;
+                db.ref('cenario_inimigos/' + idInimigo).update({ pos: estado.pos, rotY: estado.rotY });
+            } 
+            else {
+                // ATACA USANDO A VELOCIDADE (COOLDOWN) CUSTOMIZADA DO ADMIN
+                if (agora - estado.ultimoAtaque > estado.cooldown) {
+                    estado.ultimoAtaque = agora; estado.rotY = anguloY;
+                    let updateData = { rotY: estado.rotY };
+                    if (estado.tipo === 'atirador') {
+                        updateData.shoot = { time: agora, tx: Number(alvo.x.toFixed(3)), ty: 1.2, tz: Number(alvo.z.toFixed(3)) };
+                    } else if (estado.tipo === 'meelee') {
+                        updateData.meleeAttack = { time: agora };
                     }
+                    db.ref('cenario_inimigos/' + idInimigo).update(updateData);
                 }
             }
         }
 
-        // SISTEMA DE VOLTAR PARA A BASE (RESET / LEASHING)
+        // SISTEMA DE VOLTAR PARA A BASE (Se não viu ninguém por 5 segundos)
         if (!viuAlguem && (agora - estado.ultimoAvistamento > 5000)) {
             let dx = estado.spawnPos.x - estado.pos.x;
             let dz = estado.spawnPos.z - estado.pos.z;
@@ -160,8 +164,6 @@ setInterval(() => {
 
             if (distToSpawn > 1.0) {
                 let anguloY = Math.atan2(dx, dz);
-                
-                // BLINDAGEM: Impede o teleporte se os valores forem corrompidos
                 if (distToSpawn > 0.1) {
                     let dirX = (dx / distToSpawn) * estado.speed;
                     let dirZ = (dz / distToSpawn) * estado.speed;
