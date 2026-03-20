@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: IA Absoluta Ativada!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Caça-Fantasmas Ativado!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -23,17 +23,17 @@ db.ref('players').on('value', snap => { jogadoresAtivos = snap.val() || {}; });
 function lerDadosInimigo(id, data) {
     return {
         id: id,
-        hpMax: Number(data.hpMax) || 50,
-        hp: Number(data.hp),
+        hpMax: data.hpMax !== undefined ? Number(data.hpMax) : 50,
+        hp: data.hp !== undefined ? Number(data.hp) : 50,
         tipo: data.tipo || 'meelee',
         comportamento: data.comportamento || 'hostil',
         spawnPos: data.spawnPos || { x: data.pos.x, y: data.pos.y, z: data.pos.z },
         pos: data.pos,
         rotY: data.rotY || 0,
-        speed: Number(data.speed) || 0.08,
-        cooldown: Number(data.cooldown) || 2000,
-        aggroRange: Number(data.aggroRange) || 15,
-        attackRange: Number(data.attackRange) || 1.8,
+        speed: data.speed !== undefined ? Number(data.speed) : 0.08,
+        cooldown: data.cooldown !== undefined ? Number(data.cooldown) : 2000,
+        aggroRange: data.aggroRange !== undefined ? Number(data.aggroRange) : 15,
+        attackRange: data.attackRange !== undefined ? Number(data.attackRange) : 1.8,
         ultimoAtaque: estadoInimigos[id] ? estadoInimigos[id].ultimoAtaque : 0,
         mortoEm: data.mortoEm || null,
         ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : Date.now()
@@ -41,7 +41,20 @@ function lerDadosInimigo(id, data) {
 }
 
 db.ref('cenario_inimigos').on('child_added', snap => {
-    let id = snap.key; let data = snap.val(); if(!data || !data.pos) return;
+    let id = snap.key; let data = snap.val(); 
+    
+    // ==========================================
+    // O EXORCISMO (CAÇA-FANTASMAS)
+    // Se o banco de dados apresentar um monstro sem HP Máximo ou sem Modelo 3D,
+    // é um zumbi gerado por lag de rede. DELETA DA NUVEM NA HORA!
+    // ==========================================
+    if (!data || data.hpMax === undefined || !data.modeloGlb) {
+        console.log(`👻 Fantasma detectado e destruído pelo servidor: ${id}`);
+        db.ref('cenario_inimigos/' + id).remove();
+        return;
+    }
+
+    if (!data.pos) return;
     estadoInimigos[id] = lerDadosInimigo(id, data);
 });
 
@@ -111,17 +124,15 @@ setInterval(() => {
                 }
             }
         } else {
-            // SISTEMA DE DESISTÊNCIA (Perdeu de vista ou Estourou a Coleira)
             if (estourouColeira || (agora - e.ultimoAvistamento > 5000)) {
                 if (distDaBase > 0.5) {
                     let dx = e.spawnPos.x - e.pos.x; let dz = e.spawnPos.z - e.pos.z;
                     e.rotY = Math.atan2(dx, dz);
-                    let speedVolta = e.speed * 1.5; // Volta mais rápido pra base
+                    let speedVolta = e.speed * 1.5; 
                     let dirX = (dx / distDaBase) * speedVolta; let dirZ = (dz / distDaBase) * speedVolta;
                     e.pos.x += dirX; e.pos.z += dirZ;
                     db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                 } else {
-                    // Chegou na base. Se for pacífico, cura a vida toda pra não ficar agressivo
                     if (e.comportamento === 'pacifico' && e.hp < e.hpMax) {
                         e.hp = e.hpMax;
                         db.ref('cenario_inimigos/' + id).update({ hp: e.hp });
