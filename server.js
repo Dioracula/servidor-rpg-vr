@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Caça-Fantasmas Ativado!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Necromancia Bloqueada! Respawn 15s.'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -35,7 +35,7 @@ function lerDadosInimigo(id, data) {
         aggroRange: data.aggroRange !== undefined ? Number(data.aggroRange) : 15,
         attackRange: data.attackRange !== undefined ? Number(data.attackRange) : 1.8,
         ultimoAtaque: estadoInimigos[id] ? estadoInimigos[id].ultimoAtaque : 0,
-        mortoEm: data.mortoEm || null,
+        mortoEm: data.mortoEm !== undefined ? data.mortoEm : (estadoInimigos[id] ? estadoInimigos[id].mortoEm : null),
         ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : Date.now()
     };
 }
@@ -43,11 +43,6 @@ function lerDadosInimigo(id, data) {
 db.ref('cenario_inimigos').on('child_added', snap => {
     let id = snap.key; let data = snap.val(); 
     
-    // ==========================================
-    // O EXORCISMO (CAÇA-FANTASMAS)
-    // Se o banco de dados apresentar um monstro sem HP Máximo ou sem Modelo 3D,
-    // é um zumbi gerado por lag de rede. DELETA DA NUVEM NA HORA!
-    // ==========================================
     if (!data || data.hpMax === undefined || !data.modeloGlb) {
         console.log(`👻 Fantasma detectado e destruído pelo servidor: ${id}`);
         db.ref('cenario_inimigos/' + id).remove();
@@ -68,7 +63,6 @@ db.ref('cenario_inimigos').on('child_changed', snap => {
 
 db.ref('cenario_inimigos').on('child_removed', snap => { delete estadoInimigos[snap.key]; });
 
-// IA RODANDO A 100ms
 setInterval(() => {
     let agora = Date.now();
 
@@ -76,7 +70,8 @@ setInterval(() => {
         let e = estadoInimigos[id];
         
         if (e.hp <= 0) {
-            if (e.mortoEm && (agora - e.mortoEm >= 60000)) { 
+            // TEMPO DE RESPAWN REDUZIDO PARA 15 SEGUNDOS!
+            if (e.mortoEm && (agora - e.mortoEm >= 15000)) { 
                 e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = agora;
                 db.ref('cenario_inimigos/' + id).update({ hp: e.hp, mortoEm: null, pos: e.pos });
             } continue; 
