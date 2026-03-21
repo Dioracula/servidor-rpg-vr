@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Heartbeat, Patrulha e Regen Dinâmica Ativados!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Heartbeat, Patrulha, Regen e Amnésia Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -18,7 +18,27 @@ const db = admin.database();
 let estadoInimigos = {};
 let jogadoresAtivos = {};
 
-db.ref('players').on('value', snap => { jogadoresAtivos = snap.val() || {}; });
+// NOVA MECÂNICA DE AMNÉSIA: O servidor escuta as mortes dos jogadores
+db.ref('players').on('value', snap => { 
+    let novosJogadores = snap.val() || {}; 
+    
+    // Verifica se algum jogador acabou de morrer neste frame de atualização
+    for (let pId in jogadoresAtivos) {
+        if (jogadoresAtivos[pId].vivo === true && novosJogadores[pId] && novosJogadores[pId].vivo === false) {
+            console.log(`💀 Jogador ${pId} morreu! Monstros pacíficos estão esquecendo a briga...`);
+            
+            // Faz todos os monstros pacíficos esquecerem o jogador
+            for (let eId in estadoInimigos) {
+                if (estadoInimigos[eId].comportamento === 'pacifico') {
+                    estadoInimigos[eId].ignorarAgressao = true;
+                    estadoInimigos[eId].alvoPatrulha = null; // Para eles pararem de perseguir imediatamente
+                }
+            }
+        }
+    }
+    
+    jogadoresAtivos = novosJogadores; 
+});
 
 const safeNum = (val, fallback) => { let n = Number(val); return (isFinite(n) && !isNaN(n)) ? n : fallback; };
 
@@ -44,7 +64,7 @@ function lerDadosInimigo(id, data) {
         tempoProxPatrulha: estadoInimigos[id] ? estadoInimigos[id].tempoProxPatrulha : 0,
         alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null,
         
-        // Novas variáveis para Regeneração e Memória
+        // Variáveis para Regeneração e Memória
         ultimoRegen: estadoInimigos[id] ? estadoInimigos[id].ultimoRegen : 0,
         ignorarAgressao: estadoInimigos[id] ? estadoInimigos[id].ignorarAgressao : false
     };
@@ -63,7 +83,7 @@ db.ref('cenario_inimigos').on('child_changed', snap => {
         let hpAntigo = estadoInimigos[id].hp;
         let newData = lerDadosInimigo(id, data); 
         
-        // Nova mecânica: Se a vida diminuiu em relação ao frame anterior, ele foi atacado
+        // Se a vida diminuiu em relação ao frame anterior, ele foi atacado de novo
         if (newData.hp < hpAntigo) {
             newData.ignorarAgressao = false; // Lembra do jogador e revida!
             newData.ultimoAvistamento = Date.now();
@@ -154,7 +174,7 @@ setInterval(() => {
                             e.pos.x += dirX; e.pos.z += dirZ; db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                         }
                     } else {
-                        e.alvoPatPatrulha = null;
+                        e.alvoPatrulha = null;
                     }
 
                     // Regeneração Gradual de HP (A cada 1 segundo)
