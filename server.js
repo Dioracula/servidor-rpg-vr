@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Heartbeat e Patrulha Dinâmica Ativados!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Heartbeat, Patrulha e Regen Dinâmica Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -42,7 +42,11 @@ function lerDadosInimigo(id, data) {
         mortoEm: data.mortoEm !== undefined ? data.mortoEm : (estadoInimigos[id] ? estadoInimigos[id].mortoEm : null),
         ultimoAvistamento: estadoInimigos[id] ? estadoInimigos[id].ultimoAvistamento : Date.now(),
         tempoProxPatrulha: estadoInimigos[id] ? estadoInimigos[id].tempoProxPatrulha : 0,
-        alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null
+        alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null,
+        
+        // Novas variáveis para Regeneração e Memória
+        ultimoRegen: estadoInimigos[id] ? estadoInimigos[id].ultimoRegen : 0,
+        ignorarAgressao: estadoInimigos[id] ? estadoInimigos[id].ignorarAgressao : false
     };
 }
 
@@ -55,7 +59,18 @@ db.ref('cenario_inimigos').on('child_added', snap => {
 
 db.ref('cenario_inimigos').on('child_changed', snap => {
     let id = snap.key; let data = snap.val(); if(!data) return;
-    if(estadoInimigos[id]) { let newData = lerDadosInimigo(id, data); estadoInimigos[id] = { ...estadoInimigos[id], ...newData }; }
+    if(estadoInimigos[id]) { 
+        let hpAntigo = estadoInimigos[id].hp;
+        let newData = lerDadosInimigo(id, data); 
+        
+        // Nova mecânica: Se a vida diminuiu em relação ao frame anterior, ele foi atacado
+        if (newData.hp < hpAntigo) {
+            newData.ignorarAgressao = false; // Lembra do jogador e revida!
+            newData.ultimoAvistamento = Date.now();
+        }
+        
+        estadoInimigos[id] = { ...estadoInimigos[id], ...newData }; 
+    }
 });
 
 db.ref('cenario_inimigos').on('child_removed', snap => { delete estadoInimigos[snap.key]; });
@@ -75,7 +90,7 @@ setInterval(() => {
             
             if (e.hp <= 0) {
                 if (!e.mortoEm) { e.mortoEm = agora; db.ref('cenario_inimigos/' + id).update({ mortoEm: agora }); } 
-                else if (agora - e.mortoEm >= e.respawnTime) { e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = 0; e.alvoPatrulha = null; db.ref('cenario_inimigos/' + id).update({ hp: e.hp, mortoEm: null, pos: e.pos }); }
+                else if (agora - e.mortoEm >= e.respawnTime) { e.hp = e.hpMax; e.mortoEm = null; e.pos = { ...e.spawnPos }; e.ultimoAvistamento = 0; e.alvoPatrulha = null; e.ignorarAgressao = false; db.ref('cenario_inimigos/' + id).update({ hp: e.hp, mortoEm: null, pos: e.pos }); }
                 continue; 
             }
 
@@ -83,7 +98,17 @@ setInterval(() => {
             let limiteColeira = e.aggroRange * 1.5;
             let estourouColeira = distDaBase > limiteColeira;
             let machucado = e.hp < e.hpMax;
-            let querBriga = (e.comportamento === 'hostil') || (e.comportamento === 'pacifico' && machucado);
+
+            // Mecânica de esquecer o jogador: se perdeu de vista ou estourou coleira
+            if (estourouColeira || agora - e.ultimoAvistamento > 3000) {
+                if (e.comportamento === 'pacifico') {
+                    e.ignorarAgressao = true;
+                }
+            }
+            
+            if (!machucado) { e.ignorarAgressao = false; } // Vida cheia, reseta a memória
+
+            let querBriga = (e.comportamento === 'hostil') || (e.comportamento === 'pacifico' && machucado && !e.ignorarAgressao);
 
             let alvoMaisPerto = null; let menorDistancia = Infinity;
 
@@ -116,10 +141,12 @@ setInterval(() => {
                     }
                 }
             } else {
-                // MODO ALERTA REDUZIDO PARA 2 SEGUNDOS
                 let perdendoAggro = (agora - e.ultimoAvistamento < 2000); 
 
-                if (estourouColeira || (!perdendoAggro && distDaBase > 6.0)) {
+                // Se estourou coleira, ou se afastou, ou tá machucado e não tá vendo ninguém...
+                let precisaVoltar = estourouColeira || (!perdendoAggro && distDaBase > 6.0) || (machucado && !perdendoAggro);
+
+                if (precisaVoltar) {
                     if (distDaBase > 0.5) {
                         let dx = e.spawnPos.x - e.pos.x; let dz = e.spawnPos.z - e.pos.z;
                         if (distDaBase > 0.01) {
@@ -127,9 +154,17 @@ setInterval(() => {
                             e.pos.x += dirX; e.pos.z += dirZ; db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                         }
                     } else {
-                        e.alvoPatrulha = null;
-                        if (e.comportamento === 'pacifico' && e.hp < e.hpMax) { e.hp = e.hpMax; db.ref('cenario_inimigos/' + id).update({ hp: e.hp }); }
+                        e.alvoPatPatrulha = null;
                     }
+
+                    // Regeneração Gradual de HP (A cada 1 segundo)
+                    if (machucado && (agora - e.ultimoRegen > 1000)) {
+                        e.ultimoRegen = agora;
+                        let cura = Math.max(1, Math.floor(e.hpMax * 0.10)); // Cura 10% do HP Max por segundo
+                        e.hp = Math.min(e.hpMax, e.hp + cura);
+                        db.ref('cenario_inimigos/' + id).update({ hp: e.hp });
+                    }
+
                 } else if (!perdendoAggro && e.movimento === 'livre') {
                     if (agora > e.tempoProxPatrulha) {
                         if (!e.alvoPatrulha) {
