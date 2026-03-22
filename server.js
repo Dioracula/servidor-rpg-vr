@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Visão Perfeita, Perseguição, Regen e Amnésia Ativados!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Visão Perfeita, Perseguição, Regen, Amnésia e Patrulha Orgânica Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -60,7 +60,7 @@ function lerDadosInimigo(id, data) {
         alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null,
         
         ultimoRegen: estadoInimigos[id] ? estadoInimigos[id].ultimoRegen : 0,
-        currentTarget: estadoInimigos[id] ? estadoInimigos[id].currentTarget : null // Quem ele está caçando
+        currentTarget: estadoInimigos[id] ? estadoInimigos[id].currentTarget : null 
     };
 }
 
@@ -163,42 +163,71 @@ setInterval(() => {
                 }
                 e.alvoPatrulha = null; // Interrompe patrulha
             } 
-            // 4. Ação: Voltar para base e Curar (Nenhum alvo)
+            // 4. Ação: Voltar para base, Curar e Patrulha Orgânica
             else {
                 let distDaBase = Math.hypot(e.pos.x - e.spawnPos.x, e.pos.z - e.spawnPos.z);
+                let limiteColeira = e.aggroRange * 1.5;
+                let machucado = e.hp < e.hpMax;
 
-                // Cura se estiver machucado
-                if (e.hp < e.hpMax && (agora - e.ultimoRegen > 1000)) {
+                // Cura se estiver machucado (Regen de 10% a cada seg)
+                if (machucado && (agora - e.ultimoRegen > 1000)) {
                     e.ultimoRegen = agora;
-                    let cura = Math.max(1, Math.floor(e.hpMax * 0.10)); // Cura 10%
+                    let cura = Math.max(1, Math.floor(e.hpMax * 0.10)); 
                     e.hp = Math.min(e.hpMax, e.hp + cura);
                     db.ref('cenario_inimigos/' + id).update({ hp: e.hp });
                 }
 
-                if (distDaBase > 0.5) {
-                    // Andar de volta para o Respawn
-                    let dx = e.spawnPos.x - e.pos.x; let dz = e.spawnPos.z - e.pos.z;
-                    if (distDaBase > 0.01) {
-                        e.rotY = Math.atan2(dx, dz); 
-                        let speedVolta = e.speed * 1.5; // Volta correndo um pouco mais rápido
-                        let dirX = (dx / distDaBase) * speedVolta; let dirZ = (dz / distDaBase) * speedVolta;
-                        e.pos.x += dirX; e.pos.z += dirZ; 
-                        db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                // Se estourou a coleira ou está fugindo machucado para a base
+                if (distDaBase > limiteColeira || (machucado && distDaBase > 2.0)) {
+                    if (distDaBase > 0.5) {
+                        // Andar reto de volta para o Respawn (fuga)
+                        let dx = e.spawnPos.x - e.pos.x; let dz = e.spawnPos.z - e.pos.z;
+                        if (distDaBase > 0.01) {
+                            e.rotY = Math.atan2(dx, dz); 
+                            let speedVolta = e.speed * 1.5; // Volta correndo
+                            let dirX = (dx / distDaBase) * speedVolta; let dirZ = (dz / distDaBase) * speedVolta;
+                            e.pos.x += dirX; e.pos.z += dirZ; 
+                            db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                        }
+                    } else {
+                        e.alvoPatrulha = null;
                     }
-                } else if (e.movimento === 'livre') {
-                    // Chegou na base, voltar a patrulhar
+                } 
+                // PATRULHA ORGÂNICA (Wander)
+                else if (e.movimento === 'livre') {
                     if (agora > e.tempoProxPatrulha) {
+                        // Se não tem alvo de passeio, escolhe um novo
                         if (!e.alvoPatrulha) {
-                            let angulo = Math.random() * Math.PI * 2; let raio = Math.random() * 4.0;
-                            e.alvoPatrulha = { x: e.spawnPos.x + Math.cos(angulo)*raio, z: e.spawnPos.z + Math.sin(angulo)*raio };
+                            // Escolhe uma direção a partir de ONDE ELE ESTÁ (mais natural)
+                            let angulo = Math.random() * Math.PI * 2; 
+                            let distPasseio = 1.5 + Math.random() * 3.5; // Anda de 1.5m a 5m
+                            
+                            let tX = e.pos.x + Math.cos(angulo) * distPasseio;
+                            let tZ = e.pos.z + Math.sin(angulo) * distPasseio;
+                            
+                            // Se esse passeio for jogar ele muito longe do spawn central, corrige para o centro
+                            let distPasseioDaBase = Math.hypot(tX - e.spawnPos.x, tZ - e.spawnPos.z);
+                            if (distPasseioDaBase > (e.aggroRange * 0.8)) {
+                                let anguloCorrecao = Math.atan2(e.spawnPos.x - e.pos.x, e.spawnPos.z - e.pos.z);
+                                tX = e.pos.x + Math.cos(anguloCorrecao) * distPasseio;
+                                tZ = e.pos.z + Math.sin(anguloCorrecao) * distPasseio;
+                            }
+                            
+                            e.alvoPatrulha = { x: tX, z: tZ };
                         } else {
+                            // Caminhando devagar até o ponto de passeio
                             let dxP = e.alvoPatrulha.x - e.pos.x; let dzP = e.alvoPatrulha.z - e.pos.z; let distP = Math.hypot(dxP, dzP);
+                            
                             if (distP > 0.2) {
-                                e.rotY = Math.atan2(dxP, dzP); let speedPatrol = e.speed * 0.6; 
+                                e.rotY = Math.atan2(dxP, dzP); 
+                                let speedPatrol = e.speed * 0.5; // Andar relaxado (metade da vel. max)
                                 let dirX = (dxP / distP) * speedPatrol; let dirZ = (dzP / distP) * speedPatrol;
-                                e.pos.x += dirX; e.pos.z += dirZ; db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                                e.pos.x += dirX; e.pos.z += dirZ; 
+                                db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                             } else {
-                                e.alvoPatrulha = null; e.tempoProxPatrulha = agora + 2000 + Math.random() * 4000;
+                                // Chegou! Descansa entre 2 e 5 segundos antes de dar o próximo passeio
+                                e.alvoPatrulha = null; 
+                                e.tempoProxPatrulha = agora + 2000 + Math.random() * 3000;
                             }
                         }
                     }
