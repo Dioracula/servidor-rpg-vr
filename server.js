@@ -50,7 +50,7 @@ function lerDadosInimigo(id, data) {
         hp: safeNum(data.hp, 50),
         tipo: data.tipo || 'meelee',
         comportamento: data.comportamento || 'hostil',
-        movimento: data.movimento || 'estatico',
+        movimento: data.movimento || 'livre', // FORÇA A PATRULHA POR PADRÃO
         spawnPos: data.spawnPos ? { x: safeNum(data.spawnPos.x, 0), y: safeNum(data.spawnPos.y, 0), z: safeNum(data.spawnPos.z, 0) } : { x: safeNum(data.pos.x, 0), y: safeNum(data.pos.y, 0), z: safeNum(data.pos.z, 0) },
         pos: data.pos ? { x: safeNum(data.pos.x, 0), y: safeNum(data.pos.y, 0), z: safeNum(data.pos.z, 0) } : {x:0, y:0, z:0},
         rotY: safeNum(data.rotY, 0),
@@ -151,8 +151,8 @@ setInterval(() => {
 
             // 3. Ação: Perseguir e Atacar
             if (targetPlayerPos) {
-                e.retornandoBase = false; // Parar de fugir e atacar!
-                e.alvoPatrulha = null; // Interrompe patrulha
+                e.retornandoBase = false; 
+                e.alvoPatrulha = null; 
 
                 let dx = safeNum(targetPlayerPos.x, 0) - e.pos.x; 
                 let dz = safeNum(targetPlayerPos.z, 0) - e.pos.z; 
@@ -191,7 +191,7 @@ setInterval(() => {
                     if (e.hp >= e.hpMax) e.ignorarAgressao = false; 
                 }
 
-                // Ativa a obrigação de voltar para a base se estiver fora do limite ou machucado (e ignorando alvos)
+                // Ativa a obrigação de voltar para a base se estiver fora do limite ou machucado
                 if (distDaBase > limiteColeira || (machucado && e.ignorarAgressao)) {
                     e.retornandoBase = true;
                     e.alvoPatrulha = null; 
