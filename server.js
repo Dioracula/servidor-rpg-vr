@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Frequência Dinâmica e Prioridade de Ataque Ativados!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Frequência Dinâmica e Root Motion Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -38,13 +38,14 @@ const safeNum = (val, fallback) => { let n = Number(val); return (isFinite(n) &&
 
 function lerDadosInimigo(id, data) {
     let ataques = data.ataques || [];
-    // Fallback se não tiver ataques configurados no novo formato
+    
     if (ataques.length === 0) {
         ataques.push({
             animacao: data.animAtaque || 'chr784_armature|chr784_ba01',
             tipo: data.tipo || 'meelee', alcance: data.attackRange || 1.8, dano: data.dano || 10, 
             freqAtaque: data.cooldown || 2000, hitStart: 400, hitEnd: 800, duracao: 1000, osso: data.ossoAtaque || 'hand_r',
-            glbTiro: data.modeloTiroGlb || '', escalaTiro: data.escalaTiro || '0.5 0.5 0.5', rotTiro: data.rotacaoTiro || '0 0 0', velTiro: data.velocidadeTiro || 6.0
+            glbTiro: data.modeloTiroGlb || '', escalaTiro: data.escalaTiro || '0.5 0.5 0.5', rotTiro: data.rotacaoTiro || '0 0 0', velTiro: data.velocidadeTiro || 6.0,
+            movimentoAtaque: data.movimentoAtaque || 'parado'
         });
     }
 
@@ -57,7 +58,9 @@ function lerDadosInimigo(id, data) {
         aggroRange: safeNum(data.aggroRange, 15), respawnTime: safeNum(data.respawnTime, 60000),
         ataques: ataques,
         ultimoAtaque: estadoInimigos[id] ? estadoInimigos[id].ultimoAtaque : 0,
-        cooldownAtual: estadoInimigos[id] ? estadoInimigos[id].cooldownAtual : 0, // NOVO: Cooldown baseado no ataque usado
+        cooldownAtual: estadoInimigos[id] ? estadoInimigos[id].cooldownAtual : 0, 
+        duracaoAtual: estadoInimigos[id] ? estadoInimigos[id].duracaoAtual : 0, 
+        movimentoAtaqueAtual: estadoInimigos[id] ? estadoInimigos[id].movimentoAtaqueAtual : 'parado',
         mortoEm: data.mortoEm !== undefined ? data.mortoEm : (estadoInimigos[id] ? estadoInimigos[id].mortoEm : null),
         tempoProxPatrulha: estadoInimigos[id] ? estadoInimigos[id].tempoProxPatrulha : 0, alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null,
         ultimoRegen: estadoInimigos[id] ? estadoInimigos[id].ultimoRegen : 0, currentTarget: estadoInimigos[id] ? estadoInimigos[id].currentTarget : null,
@@ -125,29 +128,43 @@ setInterval(() => {
                 let maxRange = Math.max(...e.ataques.map(a => parseFloat(a.alcance) || 1.8));
 
                 if (distAoAlvo > maxRange) {
-                    let dirX = (dx / distAoAlvo) * e.speed; let dirZ = (dz / distAoAlvo) * e.speed;
-                    e.pos.x += dirX; e.pos.z += dirZ;
-                    db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                    let emAtaqueParado = (agora - e.ultimoAtaque < e.duracaoAtual) && (e.movimentoAtaqueAtual === 'parado');
+                    if (!emAtaqueParado) {
+                        let dirX = (dx / distAoAlvo) * e.speed; let dirZ = (dz / distAoAlvo) * e.speed;
+                        e.pos.x += dirX; e.pos.z += dirZ;
+                        db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                    }
                 } else {
-                    // VERIFICA O COOLDOWN GLOBAL ATUAL (Que foi ditado pelo último ataque)
                     if (agora - e.ultimoAtaque > e.cooldownAtual) {
                         
                         let ataquesValidos = e.ataques.map((a, i) => ({...a, index: i})).filter(a => distAoAlvo <= (parseFloat(a.alcance) || 1.8));
                         
                         if (ataquesValidos.length > 0) {
-                            // ORDENA DO MAIS DEMORADO (Maior freqAtaque) PARA O MENOS DEMORADO, dando prioridade!
                             ataquesValidos.sort((a, b) => (parseFloat(b.freqAtaque) || 2000) - (parseFloat(a.freqAtaque) || 2000));
                             
-                            let chosen = ataquesValidos[0]; // Pega o prioritário (O de maior tempo)
+                            let chosen = ataquesValidos[0]; 
                             
                             e.ultimoAtaque = agora; 
-                            e.cooldownAtual = parseFloat(chosen.freqAtaque) || 2000; // Trava o inimigo com esse tempo!
+                            e.cooldownAtual = parseFloat(chosen.freqAtaque) || 2000; 
+                            e.duracaoAtual = parseFloat(chosen.duracao) || 1000;
+                            e.movimentoAtaqueAtual = chosen.movimentoAtaque || 'parado';
                             
                             db.ref('cenario_inimigos/' + id).update({
                                 rotY: e.rotY,
                                 ataqueAtivo: { index: chosen.index, time: agora, tx: safeNum(targetPlayerPos.x, 0), ty: 1.2, tz: safeNum(targetPlayerPos.z, 0) }
                             });
                         } else {
+                            let emAtaqueParado = (agora - e.ultimoAtaque < e.duracaoAtual) && (e.movimentoAtaqueAtual === 'parado');
+                            if (!emAtaqueParado) {
+                                let dirX = (dx / distAoAlvo) * e.speed; let dirZ = (dz / distAoAlvo) * e.speed;
+                                e.pos.x += dirX; e.pos.z += dirZ;
+                                db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
+                            }
+                        }
+                    } else {
+                        // Está dentro do alcance mas no cooldown de recarga
+                        let emAtaqueParado = (agora - e.ultimoAtaque < e.duracaoAtual) && (e.movimentoAtaqueAtual === 'parado');
+                        if (!emAtaqueParado) {
                             let dirX = (dx / distAoAlvo) * e.speed; let dirZ = (dz / distAoAlvo) * e.speed;
                             e.pos.x += dirX; e.pos.z += dirZ;
                             db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
