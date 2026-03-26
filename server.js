@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Múltiplos Ataques e Sistema de Boss Ativados!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Múltiplos Ataques, Boss e Correção VFX Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -49,7 +49,8 @@ function lerDadosInimigo(id, data) {
 
     return {
         id: id, hpMax: safeNum(data.hpMax, 50), hp: safeNum(data.hp, 50),
-        rank: data.rank || 'comum', // === DEFINE SE É BOSS OU COMUM ===
+        rank: data.rank || 'comum', 
+        vfxOffset: data.vfxOffset ? { x: safeNum(data.vfxOffset.x, 0), y: safeNum(data.vfxOffset.y, 0), z: safeNum(data.vfxOffset.z, 0) } : {x:0, y:0, z:0},
         comportamento: data.comportamento || 'hostil', movimento: data.movimento || 'livre',
         spawnPos: data.spawnPos ? { x: safeNum(data.spawnPos.x, 0), y: safeNum(data.spawnPos.y, 0), z: safeNum(data.spawnPos.z, 0) } : {x:0, y:0, z:0},
         pos: data.pos ? { x: safeNum(data.pos.x, 0), y: safeNum(data.pos.y, 0), z: safeNum(data.pos.z, 0) } : {x:0, y:0, z:0},
