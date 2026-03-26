@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: IA Multi-Ataques Ativada!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Frequência Dinâmica e Prioridade de Ataque Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -37,13 +37,13 @@ db.ref('players').on('value', snap => {
 const safeNum = (val, fallback) => { let n = Number(val); return (isFinite(n) && !isNaN(n)) ? n : fallback; };
 
 function lerDadosInimigo(id, data) {
-    // Compatibilidade com inimigos antigos
     let ataques = data.ataques || [];
+    // Fallback se não tiver ataques configurados no novo formato
     if (ataques.length === 0) {
         ataques.push({
             animacao: data.animAtaque || 'chr784_armature|chr784_ba01',
-            tipo: data.tipo || 'meelee', alcance: data.attackRange || 1.8,
-            dano: data.dano || 10, tempoHit: 400, duracao: 1000, osso: data.ossoAtaque || '',
+            tipo: data.tipo || 'meelee', alcance: data.attackRange || 1.8, dano: data.dano || 10, 
+            freqAtaque: data.cooldown || 2000, hitStart: 400, hitEnd: 800, duracao: 1000, osso: data.ossoAtaque || 'hand_r',
             glbTiro: data.modeloTiroGlb || '', escalaTiro: data.escalaTiro || '0.5 0.5 0.5', rotTiro: data.rotacaoTiro || '0 0 0', velTiro: data.velocidadeTiro || 6.0
         });
     }
@@ -53,10 +53,11 @@ function lerDadosInimigo(id, data) {
         comportamento: data.comportamento || 'hostil', movimento: data.movimento || 'livre',
         spawnPos: data.spawnPos ? { x: safeNum(data.spawnPos.x, 0), y: safeNum(data.spawnPos.y, 0), z: safeNum(data.spawnPos.z, 0) } : {x:0, y:0, z:0},
         pos: data.pos ? { x: safeNum(data.pos.x, 0), y: safeNum(data.pos.y, 0), z: safeNum(data.pos.z, 0) } : {x:0, y:0, z:0},
-        rotY: safeNum(data.rotY, 0), speed: safeNum(data.speed, 0.08), cooldown: safeNum(data.cooldown, 2000),
+        rotY: safeNum(data.rotY, 0), speed: safeNum(data.speed, 0.08),
         aggroRange: safeNum(data.aggroRange, 15), respawnTime: safeNum(data.respawnTime, 60000),
         ataques: ataques,
         ultimoAtaque: estadoInimigos[id] ? estadoInimigos[id].ultimoAtaque : 0,
+        cooldownAtual: estadoInimigos[id] ? estadoInimigos[id].cooldownAtual : 0, // NOVO: Cooldown baseado no ataque usado
         mortoEm: data.mortoEm !== undefined ? data.mortoEm : (estadoInimigos[id] ? estadoInimigos[id].mortoEm : null),
         tempoProxPatrulha: estadoInimigos[id] ? estadoInimigos[id].tempoProxPatrulha : 0, alvoPatrulha: estadoInimigos[id] ? estadoInimigos[id].alvoPatrulha : null,
         ultimoRegen: estadoInimigos[id] ? estadoInimigos[id].ultimoRegen : 0, currentTarget: estadoInimigos[id] ? estadoInimigos[id].currentTarget : null,
@@ -75,9 +76,7 @@ db.ref('cenario_inimigos').on('child_changed', snap => {
     let id = snap.key; let data = snap.val(); if(!data) return;
     if(estadoInimigos[id]) { 
         let hpAntigo = estadoInimigos[id].hp; let newData = lerDadosInimigo(id, data); 
-        if (newData.hp < hpAntigo && data.ultimoAtacante) {
-            newData.currentTarget = data.ultimoAtacante; newData.retornandoBase = false; newData.ignorarAgressao = false;
-        }
+        if (newData.hp < hpAntigo && data.ultimoAtacante) { newData.currentTarget = data.ultimoAtacante; newData.retornandoBase = false; newData.ignorarAgressao = false; }
         estadoInimigos[id] = { ...estadoInimigos[id], ...newData }; 
     }
 });
@@ -130,19 +129,25 @@ setInterval(() => {
                     e.pos.x += dirX; e.pos.z += dirZ;
                     db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                 } else {
-                    if (agora - e.ultimoAtaque > e.cooldown) {
-                        // Encontra ataques que alcançam o alvo e sorteia um
+                    // VERIFICA O COOLDOWN GLOBAL ATUAL (Que foi ditado pelo último ataque)
+                    if (agora - e.ultimoAtaque > e.cooldownAtual) {
+                        
                         let ataquesValidos = e.ataques.map((a, i) => ({...a, index: i})).filter(a => distAoAlvo <= (parseFloat(a.alcance) || 1.8));
                         
                         if (ataquesValidos.length > 0) {
-                            let chosen = ataquesValidos[Math.floor(Math.random() * ataquesValidos.length)];
+                            // ORDENA DO MAIS DEMORADO (Maior freqAtaque) PARA O MENOS DEMORADO, dando prioridade!
+                            ataquesValidos.sort((a, b) => (parseFloat(b.freqAtaque) || 2000) - (parseFloat(a.freqAtaque) || 2000));
+                            
+                            let chosen = ataquesValidos[0]; // Pega o prioritário (O de maior tempo)
+                            
                             e.ultimoAtaque = agora; 
+                            e.cooldownAtual = parseFloat(chosen.freqAtaque) || 2000; // Trava o inimigo com esse tempo!
+                            
                             db.ref('cenario_inimigos/' + id).update({
                                 rotY: e.rotY,
                                 ataqueAtivo: { index: chosen.index, time: agora, tx: safeNum(targetPlayerPos.x, 0), ty: 1.2, tz: safeNum(targetPlayerPos.z, 0) }
                             });
                         } else {
-                            // Se nenhum ataque alcança ainda, continua andando
                             let dirX = (dx / distAoAlvo) * e.speed; let dirZ = (dz / distAoAlvo) * e.speed;
                             e.pos.x += dirX; e.pos.z += dirZ;
                             db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
@@ -165,8 +170,7 @@ setInterval(() => {
                 if (e.retornandoBase) {
                     if (distDaBase > 0.5) {
                         let dxBase = e.spawnPos.x - e.pos.x; let dzBase = e.spawnPos.z - e.pos.z;
-                        e.rotY = Math.atan2(dxBase, dzBase); 
-                        let speedVolta = e.speed * 1.5; 
+                        e.rotY = Math.atan2(dxBase, dzBase); let speedVolta = e.speed * 1.5; 
                         e.pos.x += (dxBase / distDaBase) * speedVolta; e.pos.z += (dzBase / distDaBase) * speedVolta; 
                         db.ref('cenario_inimigos/' + id).update({ pos: e.pos, rotY: e.rotY });
                     }
