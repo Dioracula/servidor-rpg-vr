@@ -5,7 +5,7 @@ const serviceAccount = require("./serviceAccountKey.json");
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Múltiplos Ataques, Boss e Correção VFX Ativados!'); });
+app.get('/', (req, res) => { res.send('🔥 Servidor RPG VIVO: Múltiplos Ataques, Boss, Correção VFX e Colisão Dinâmica Ativados!'); });
 app.listen(port, () => { console.log(`🌐 Servidor escutando na porta ${port}`); });
 
 admin.initializeApp({
@@ -50,6 +50,7 @@ function lerDadosInimigo(id, data) {
     return {
         id: id, hpMax: safeNum(data.hpMax, 50), hp: safeNum(data.hp, 50),
         rank: data.rank || 'comum', 
+        escala: data.escala ? { x: safeNum(data.escala.x, 1), y: safeNum(data.escala.y, 1), z: safeNum(data.escala.z, 1) } : {x:1, y:1, z:1},
         vfxOffset: data.vfxOffset ? { x: safeNum(data.vfxOffset.x, 0), y: safeNum(data.vfxOffset.y, 0), z: safeNum(data.vfxOffset.z, 0) } : {x:0, y:0, z:0},
         comportamento: data.comportamento || 'hostil', movimento: data.movimento || 'livre',
         spawnPos: data.spawnPos ? { x: safeNum(data.spawnPos.x, 0), y: safeNum(data.spawnPos.y, 0), z: safeNum(data.spawnPos.z, 0) } : {x:0, y:0, z:0},
@@ -123,9 +124,13 @@ setInterval(() => {
                 let distAoAlvo = Math.hypot(dx, dz);
                 if (distAoAlvo > 0.01) { e.rotY = Math.atan2(dx, dz); }
 
+                // === LÓGICA DE DISTÂNCIA DINÂMICA (Para não entrar no player) ===
+                let raioCorpo = (e.escala.z || 1) * 1.5; 
                 let maxRange = Math.max(...e.ataques.map(a => parseFloat(a.alcance) || 1.8));
+                let distParada = maxRange + raioCorpo - 1.5; 
+                if (distParada < maxRange) distParada = maxRange; // Nunca menor que o ataque base
 
-                if (distAoAlvo > maxRange) {
+                if (distAoAlvo > distParada) {
                     let emAtaqueParado = (agora - e.ultimoAtaque < e.duracaoAtual) && (e.movimentoAtaqueAtual === 'parado');
                     if (!emAtaqueParado) {
                         let dirX = (dx / distAoAlvo) * e.speed; let dirZ = (dz / distAoAlvo) * e.speed;
@@ -134,7 +139,7 @@ setInterval(() => {
                     }
                 } else {
                     if (agora - e.ultimoAtaque > e.cooldownAtual) {
-                        let ataquesValidos = e.ataques.map((a, i) => ({...a, index: i})).filter(a => distAoAlvo <= (parseFloat(a.alcance) || 1.8));
+                        let ataquesValidos = e.ataques.map((a, i) => ({...a, index: i})).filter(a => distAoAlvo <= ((parseFloat(a.alcance) || 1.8) + raioCorpo));
                         if (ataquesValidos.length > 0) {
                             ataquesValidos.sort((a, b) => (parseFloat(b.freqAtaque) || 2000) - (parseFloat(a.freqAtaque) || 2000));
                             let chosen = ataquesValidos[0]; 
